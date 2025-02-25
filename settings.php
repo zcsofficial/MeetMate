@@ -1,8 +1,7 @@
 <?php
 session_start();
-require 'config.php';
+require_once 'config.php';
 
-// Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: index.php");
     exit;
@@ -11,38 +10,57 @@ if (!isset($_SESSION['user_id'])) {
 $user_id = $_SESSION['user_id'];
 
 // Fetch user's profile details
-$query = "SELECT username, full_name, email, profile_picture, job_title, location, phone, linkedin_url, about_me, role FROM users WHERE id = $user_id";
+$query = "SELECT full_name, profile_picture, email, email_notifications, is_public FROM users WHERE id = $user_id";
 $result = mysqli_query($conn, $query);
 $user = mysqli_fetch_assoc($result);
-$display_name = $user['full_name'] ?: $user['username'];
 
-// Handle profile update
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_profile'])) {
-    $full_name = mysqli_real_escape_string($conn, $_POST['full_name']);
-    $job_title = !empty($_POST['job_title']) ? mysqli_real_escape_string($conn, $_POST['job_title']) : NULL;
-    $location = !empty($_POST['location']) ? mysqli_real_escape_string($conn, $_POST['location']) : NULL;
-    $phone = !empty($_POST['phone']) ? mysqli_real_escape_string($conn, $_POST['phone']) : NULL;
-    $linkedin_url = !empty($_POST['linkedin_url']) ? mysqli_real_escape_string($conn, $_POST['linkedin_url']) : NULL;
-    $about_me = !empty($_POST['about_me']) ? mysqli_real_escape_string($conn, $_POST['about_me']) : NULL;
+// Handle settings updates
+$success_message = '';
+$error_message = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Password Update
+    if (isset($_POST['update_password'])) {
+        $current_password = $_POST['current_password'];
+        $new_password = $_POST['new_password'];
+        $confirm_password = $_POST['confirm_password'];
 
-    $profile_picture = $user['profile_picture'];
-    if (isset($_FILES['profile_picture']) && $_FILES['profile_picture']['error'] == UPLOAD_ERR_OK) {
-        $upload_dir = 'uploads/';
-        if (!is_dir($upload_dir)) {
-            mkdir($upload_dir, 0777, true);
-        }
-        $image_name = uniqid() . '-' . basename($_FILES['profile_picture']['name']);
-        $image_path = $upload_dir . $image_name;
-        $image_type = exif_imagetype($_FILES['profile_picture']['tmp_name']);
-        if (in_array($image_type, [IMAGETYPE_JPEG, IMAGETYPE_PNG, IMAGETYPE_GIF]) && move_uploaded_file($_FILES['profile_picture']['tmp_name'], $image_path)) {
-            $profile_picture = $image_path;
+        // Fetch current password hash
+        $password_query = "SELECT password FROM users WHERE id = $user_id";
+        $password_result = mysqli_query($conn, $password_query);
+        $current_hash = mysqli_fetch_assoc($password_result)['password'];
+
+        if (password_verify($current_password, $current_hash)) {
+            if ($new_password === $confirm_password) {
+                $new_hash = password_hash($new_password, PASSWORD_DEFAULT);
+                $update_query = "UPDATE users SET password = '$new_hash' WHERE id = $user_id";
+                if (mysqli_query($conn, $update_query)) {
+                    $success_message = "Password updated successfully.";
+                } else {
+                    $error_message = "Error updating password: " . mysqli_error($conn);
+                }
+            } else {
+                $error_message = "New password and confirmation do not match.";
+            }
+        } else {
+            $error_message = "Current password is incorrect.";
         }
     }
 
-    $update_query = "UPDATE users SET full_name = '$full_name', job_title = " . ($job_title ? "'$job_title'" : "NULL") . ", location = " . ($location ? "'$location'" : "NULL") . ", phone = " . ($phone ? "'$phone'" : "NULL") . ", linkedin_url = " . ($linkedin_url ? "'$linkedin_url'" : "NULL") . ", about_me = " . ($about_me ? "'$about_me'" : "NULL") . ", profile_picture = " . ($profile_picture ? "'$profile_picture'" : "NULL") . ", last_updated = NOW() WHERE id = $user_id";
-    mysqli_query($conn, $update_query);
-    header("Location: profile.php");
-    exit;
+    // Email Preferences and Privacy
+    if (isset($_POST['update_settings'])) {
+        $email_notifications = isset($_POST['email_notifications']) ? 1 : 0;
+        $is_public = isset($_POST['is_public']) ? 1 : 0;
+
+        $update_query = "UPDATE users SET email_notifications = $email_notifications, is_public = $is_public WHERE id = $user_id";
+        if (mysqli_query($conn, $update_query)) {
+            $success_message = "Settings updated successfully.";
+            // Refresh user data
+            $result = mysqli_query($conn, $query);
+            $user = mysqli_fetch_assoc($result);
+        } else {
+            $error_message = "Error updating settings: " . mysqli_error($conn);
+        }
+    }
 }
 
 // Fetch notifications
@@ -56,7 +74,7 @@ $notif_count = mysqli_num_rows($notif_result);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Profile | MeetMate</title>
+    <title>Settings | MeetMate</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" rel="stylesheet">
@@ -127,8 +145,6 @@ $notif_count = mysqli_num_rows($notif_result);
         .notification-modal .notification:last-child {
             border-bottom: none;
         }
-        input[type="number"]::-webkit-inner-spin-button,
-        input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     </style>
 </head>
 <body class="bg-neutral-base min-h-screen">
@@ -181,8 +197,8 @@ $notif_count = mysqli_num_rows($notif_result);
                             <i class="ri-arrow-down-s-line ml-1"></i>
                         </button>
                         <div id="profile-dropdown" class="hidden absolute right-0 top-12 w-48 bg-white rounded-lg shadow-lg py-2">
-                            <a href="#" class="block px-4 py-2 text-gray-700 hover:bg-gray-100">Profile</a>
-                            <a href="#" class="block px-4 py-2 text-gray-700 hover:bg-gray-100">Settings</a>
+                            <a href="profile.php" class="block px-4 py-2 text-gray-700 hover:bg-gray-100">Profile</a>
+                            <a href="settings.php" class="block px-4 py-2 text-gray-700 hover:bg-gray-100">Settings</a>
                             <a href="logout.php" class="block px-4 py-2 text-gray-700 hover:bg-gray-100">Logout</a>
                         </div>
                     </div>
@@ -237,67 +253,59 @@ $notif_count = mysqli_num_rows($notif_result);
         <main class="flex-1 ml-64 p-8 pt-24">
             <div class="max-w-7xl mx-auto">
                 <header class="py-6 flex items-center justify-between">
-                    <h1 class="text-2xl font-semibold text-neutral-text">Profile</h1>
+                    <h1 class="text-2xl font-semibold text-neutral-text">Settings</h1>
                     <a href="dashboard.php" class="px-4 py-2 bg-primary text-white rounded-button hover:bg-primary/90">Back to Dashboard</a>
                 </header>
 
                 <div class="bg-white rounded-lg shadow-sm p-6">
-                    <div class="flex items-start space-x-6">
-                        <div class="flex-shrink-0">
-                            <?php if ($user['profile_picture']): ?>
-                                <img src="<?php echo htmlspecialchars($user['profile_picture']); ?>" class="w-24 h-24 rounded-full object-cover" alt="Profile Picture">
-                            <?php else: ?>
-                                <div class="w-24 h-24 rounded-full bg-gray-200 flex items-center justify-center text-4xl text-gray-600"><?php echo strtoupper(substr($display_name, 0, 1)); ?></div>
-                            <?php endif; ?>
-                        </div>
-                        <div class="flex-1">
-                            <h2 class="text-xl font-semibold text-neutral-text"><?php echo htmlspecialchars($display_name); ?></h2>
-                            <p class="text-sm text-gray-500 mt-1"><?php echo htmlspecialchars($user['job_title'] ?: 'No job title'); ?> • <?php echo htmlspecialchars($user['location'] ?: 'No location'); ?></p>
-                            <p class="text-sm text-gray-500 mt-1"><?php echo htmlspecialchars($user['email']); ?></p>
-                            <?php if ($user['linkedin_url']): ?>
-                                <a href="<?php echo htmlspecialchars($user['linkedin_url']); ?>" class="text-sm text-primary hover:underline mt-1 block">LinkedIn Profile</a>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+                    <!-- Messages -->
+                    <?php if ($success_message): ?>
+                        <div class="mb-4 p-4 bg-green-50 text-green-700 rounded-lg"><?php echo $success_message; ?></div>
+                    <?php endif; ?>
+                    <?php if ($error_message): ?>
+                        <div class="mb-4 p-4 bg-red-50 text-red-700 rounded-lg"><?php echo $error_message; ?></div>
+                    <?php endif; ?>
 
-                    <div class="mt-6">
-                        <h3 class="text-lg font-medium text-neutral-text">About Me</h3>
-                        <p class="text-sm text-gray-600 mt-2"><?php echo htmlspecialchars($user['about_me'] ?: 'No about me provided.'); ?></p>
-                    </div>
-
-                    <div class="mt-6">
-                        <h3 class="text-lg font-medium text-neutral-text">Edit Profile</h3>
-                        <form method="POST" enctype="multipart/form-data" class="mt-4 space-y-4">
+                    <!-- Password Update -->
+                    <div class="mb-6">
+                        <h3 class="text-lg font-medium text-neutral-text">Change Password</h3>
+                        <form method="POST" class="mt-4 space-y-4">
                             <div>
-                                <label for="full_name" class="block text-sm font-medium text-gray-700">Full Name</label>
-                                <input type="text" name="full_name" id="full_name" value="<?php echo htmlspecialchars($user['full_name']); ?>" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20" required>
+                                <label for="current_password" class="block text-sm font-medium text-gray-700">Current Password</label>
+                                <input type="password" name="current_password" id="current_password" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20" required>
                             </div>
                             <div>
-                                <label for="profile_picture" class="block text-sm font-medium text-gray-700">Profile Picture</label>
-                                <input type="file" name="profile_picture" id="profile_picture" class="w-full p-2 border rounded-lg" accept="image/jpeg,image/png,image/gif">
+                                <label for="new_password" class="block text-sm font-medium text-gray-700">New Password</label>
+                                <input type="password" name="new_password" id="new_password" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20" required>
                             </div>
                             <div>
-                                <label for="job_title" class="block text-sm font-medium text-gray-700">Job Title</label>
-                                <input type="text" name="job_title" id="job_title" value="<?php echo htmlspecialchars($user['job_title'] ?: ''); ?>" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20">
-                            </div>
-                            <div>
-                                <label for="location" class="block text-sm font-medium text-gray-700">Location</label>
-                                <input type="text" name="location" id="location" value="<?php echo htmlspecialchars($user['location'] ?: ''); ?>" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20">
-                            </div>
-                            <div>
-                                <label for="phone" class="block text-sm font-medium text-gray-700">Phone</label>
-                                <input type="text" name="phone" id="phone" value="<?php echo htmlspecialchars($user['phone'] ?: ''); ?>" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20">
-                            </div>
-                            <div>
-                                <label for="linkedin_url" class="block text-sm font-medium text-gray-700">LinkedIn URL</label>
-                                <input type="url" name="linkedin_url" id="linkedin_url" value="<?php echo htmlspecialchars($user['linkedin_url'] ?: ''); ?>" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20">
-                            </div>
-                            <div>
-                                <label for="about_me" class="block text-sm font-medium text-gray-700">About Me</label>
-                                <textarea name="about_me" id="about_me" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20" rows="4"><?php echo htmlspecialchars($user['about_me'] ?: ''); ?></textarea>
+                                <label for="confirm_password" class="block text-sm font-medium text-gray-700">Confirm New Password</label>
+                                <input type="password" name="confirm_password" id="confirm_password" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20" required>
                             </div>
                             <div class="flex justify-end">
-                                <button type="submit" name="update_profile" class="px-4 py-2 bg-primary text-white rounded-button hover:bg-primary/90">Save Changes</button>
+                                <button type="submit" name="update_password" class="px-4 py-2 bg-primary text-white rounded-button hover:bg-primary/90">Update Password</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Email Preferences and Privacy -->
+                    <div>
+                        <h3 class="text-lg font-medium text-neutral-text">Preferences & Privacy</h3>
+                        <form method="POST" class="mt-4 space-y-4">
+                            <div class="flex items-center">
+                                <input type="checkbox" name="email_notifications" id="email_notifications" 
+                                       class="h-4 w-4 text-primary focus:ring-primary/20 border-gray-300 rounded" 
+                                       <?php echo $user['email_notifications'] ? 'checked' : ''; ?>>
+                                <label for="email_notifications" class="ml-2 text-sm text-gray-700">Receive email notifications</label>
+                            </div>
+                            <div class="flex items-center">
+                                <input type="checkbox" name="is_public" id="is_public" 
+                                       class="h-4 w-4 text-primary focus:ring-primary/20 border-gray-300 rounded" 
+                                       <?php echo $user['is_public'] ? 'checked' : ''; ?>>
+                                <label for="is_public" class="ml-2 text-sm text-gray-700">Make my profile public</label>
+                            </div>
+                            <div class="flex justify-end">
+                                <button type="submit" name="update_settings" class="px-4 py-2 bg-primary text-white rounded-button hover:bg-primary/90">Save Settings</button>
                             </div>
                         </form>
                     </div>
